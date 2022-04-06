@@ -3,16 +3,18 @@ use std::{ops, str::FromStr};
 
 use nom::{
     branch::alt,
+    bytes::complete::tag,
     character::complete::{char, space0},
     combinator::map,
     multi::fold_many0,
     number::complete::double,
-    sequence::{delimited, pair},
+    sequence::{delimited, pair, separated_pair},
     Finish, IResult,
 };
 
 fn main() {
-    let expr = "(1 + 2) * 3 / (2 + 1) /2 * 3".parse::<Expr>().unwrap();
+    let expr = "2 ** 2 - 2^2".parse::<Expr>().unwrap();
+    dbg!(&expr);
     println!("{} = {}", expr, expr.eval());
 }
 
@@ -32,23 +34,27 @@ enum BinOpKind {
     Sub,
     Mul,
     Div,
+    Pow,
 }
 
 impl Expr {
     fn eval<'a>(&'a self) -> f64 {
+        use Expr::*;
         match self {
-            Expr::Val(v) => *v,
-            Expr::BinOp { kind, l, r } => Expr::eval_bin(kind, l, r),
-            Expr::Parens(expr) => expr.eval(),
+            Val(v) => *v,
+            BinOp { kind, l, r } => Expr::eval_bin(kind, l, r),
+            Parens(expr) => expr.eval(),
         }
     }
 
     fn eval_bin<'a>(kind: &'a BinOpKind, l: &'a Box<Expr>, r: &'a Box<Expr>) -> f64 {
+        use BinOpKind::*;
         match kind {
-            BinOpKind::Add => l.eval() + r.eval(),
-            BinOpKind::Sub => l.eval() - r.eval(),
-            BinOpKind::Mul => l.eval() * r.eval(),
-            BinOpKind::Div => l.eval() / r.eval(),
+            Add => l.eval() + r.eval(),
+            Sub => l.eval() - r.eval(),
+            Mul => l.eval() * r.eval(),
+            Div => l.eval() / r.eval(),
+            Pow => l.eval().powf(r.eval()),
         }
     }
 }
@@ -64,11 +70,13 @@ impl FromStr for Expr {
 
 impl fmt::Display for BinOpKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use BinOpKind::*;
         match self {
-            BinOpKind::Add => write!(f, "+"),
-            BinOpKind::Sub => write!(f, "-"),
-            BinOpKind::Mul => write!(f, "*"),
-            BinOpKind::Div => write!(f, "/"),
+            Add => write!(f, "+"),
+            Sub => write!(f, "-"),
+            Mul => write!(f, "*"),
+            Div => write!(f, "/"),
+            Pow => write!(f, "^"),
         }
     }
 }
@@ -146,11 +154,27 @@ fn val(i: &str) -> IResult<&str, Expr> {
     Ok((p.0, p.1))
 }
 
+fn exponent(i: &str) -> IResult<&str, Expr> {
+    let p = alt((
+        map(
+            separated_pair(val, alt((tag("**"), tag("^"))), val),
+            |(l, r)| Expr::BinOp {
+                kind: BinOpKind::Pow,
+                l: Box::new(l),
+                r: Box::new(r),
+            },
+        ),
+        val,
+    ))(i)?;
+
+    Ok((p.0, p.1))
+}
+
 fn term(i: &str) -> IResult<&str, Expr> {
-    let (i, init) = val(i)?;
+    let (i, init) = exponent(i)?;
 
     fold_many0(
-        pair(alt((char('*'), char('/'))), val),
+        pair(alt((char('*'), char('/'))), exponent),
         move || init.clone(),
         |acc, (op, val): (char, Expr)| {
             if op == '*' {
